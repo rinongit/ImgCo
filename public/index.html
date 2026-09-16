@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="sq">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#244587">
+  <title>Medical Center — Terminet</title>
+  <style>
+    :root{--bg1:#244586;--bg2:#3d5793;--bg3:#5d5592;--panel:#f4f6fb;--line:#b8c0ce;--text:#667085;--dark:#344054;--blue:#6f8fd2;--blue2:#dfe8fb;--danger:#b54747;--ok:#2f7d62;--shadow:0 10px 28px rgba(23,38,74,.18);--row:31px}
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--dark)}
+    body{background:linear-gradient(115deg,var(--bg1) 0%,var(--bg2) 52%,var(--bg3) 100%);min-height:100vh}
+    button,input,select,textarea{font:inherit}
+    button{cursor:pointer}
+    .app{width:min(1180px,calc(100% - 32px));margin:0 auto;padding:42px 0 54px;display:grid;grid-template-columns:290px minmax(0,1fr);gap:28px;align-items:start}
+    .side{display:grid;gap:22px}
+    .doctor-row{display:grid;grid-template-columns:1fr 42px;gap:8px}
+    .doctor-select,.icon-btn,.ghost-btn,.primary-btn,.danger-btn{border:0;border-radius:12px;min-height:44px}
+    .doctor-select{width:100%;background:white;color:#6d7280;padding:0 42px 0 16px;box-shadow:var(--shadow);border:1px solid rgba(255,255,255,.35)}
+    .icon-btn{background:#fff;color:#6f84b7;box-shadow:var(--shadow);font-size:22px;font-weight:700}
+    .calendar-card{background:#fff;border-radius:13px;box-shadow:var(--shadow);padding:17px 18px 16px}
+    .cal-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #c9cfda;padding:0 2px 11px;margin-bottom:12px}
+    .cal-title{font-weight:700;font-size:13px;color:#777d88;text-transform:uppercase;letter-spacing:.02em}
+    .cal-nav{display:flex;gap:3px}
+    .cal-nav button{border:0;background:transparent;color:#6f84b7;width:30px;height:30px;border-radius:8px;font-size:18px}
+    .week,.days{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;gap:2px}
+    .week{font-size:12px;font-weight:700;color:#6e89c6;margin-bottom:5px}
+    .week span:last-child{color:#bc6b6b}
+    .days button{border:0;background:transparent;min-width:0;aspect-ratio:1;border-radius:50%;font-size:13px;color:#627caf;display:grid;place-items:center}
+    .days button.out{color:#c7ccda}.days button.today{box-shadow:inset 0 0 0 1px #9aabd0}.days button.selected{background:#7f9ad7;color:white;font-weight:700}.days button:hover{background:#edf2ff}
+    .tip{font-size:12px;color:rgba(255,255,255,.78);padding:0 4px;line-height:1.45}
+    .main{min-width:0}
+    .toolbar{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:14px;color:white}
+    .date-title{font-size:19px;font-weight:700}.date-sub{font-size:12px;opacity:.78;margin-top:2px}
+    .toolbar-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .toolbar button{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.13);color:white;border-radius:10px;min-height:40px;padding:0 13px;backdrop-filter:blur(5px)}
+    .toolbar .new-btn{background:white;color:#516fae;border-color:white;font-weight:700}
+    .schedule-wrap{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+    .schedule{position:relative;background:var(--panel);border-radius:13px;box-shadow:var(--shadow);overflow:hidden;padding:18px 18px 18px 16px}
+    .schedule-body{position:relative}
+    .slot{height:var(--row);display:grid;grid-template-columns:52px 1fr;align-items:start;position:relative}
+    .slot::after{content:"";position:absolute;left:54px;right:0;top:0;border-top:1px solid var(--line)}
+    .slot.hour::after{border-top-color:#929dac}
+    .time{font-size:12px;text-align:right;padding:4px 8px 0 0;color:#8a919d;line-height:1;white-space:nowrap}
+    .slot.hour .time{font-weight:700;font-size:14px;color:#68717e}
+    .hit{position:absolute;left:55px;right:0;height:var(--row);border:0;background:transparent;z-index:1;cursor:pointer}
+    .hit:hover{background:rgba(112,145,210,.08)}
+    .appt{position:absolute;left:60px;right:5px;z-index:3;border:0;border-left:4px solid #6f8fd2;border-radius:8px;background:#e6edfb;color:#3e568a;padding:6px 9px;text-align:left;overflow:hidden;box-shadow:0 2px 6px rgba(45,65,105,.12);min-height:28px}
+    .appt.confirmed{border-left-color:#6f8fd2;background:#e6edfb;color:#3e568a}.appt.waiting{border-left-color:#b1833f;background:#f8edd8;color:#6f5227}.appt.completed{border-left-color:#4f9178;background:#dff0e9;color:#316554}.appt.cancelled{border-left-color:#9b9da5;background:#ececef;color:#6d7078;text-decoration:line-through}
+    .appt strong{display:block;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.appt small{display:block;font-size:10px;opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+    .empty-note{display:none;color:white;text-align:center;padding:16px}
+    dialog{border:0;border-radius:16px;padding:0;width:min(520px,calc(100% - 24px));box-shadow:0 24px 80px rgba(15,23,42,.35);color:#344054}
+    dialog::backdrop{background:rgba(20,31,59,.48);backdrop-filter:blur(2px)}
+    .modal{padding:20px}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}.modal-head h2{margin:0;font-size:19px}.close{border:0;background:#f0f2f6;color:#667085;border-radius:9px;width:38px;height:38px;font-size:20px}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}.field{display:grid;gap:6px}.field.full{grid-column:1/-1}.field label{font-size:12px;font-weight:700;color:#667085}.field input,.field select,.field textarea{width:100%;border:1px solid #d0d5dd;border-radius:10px;padding:10px 11px;color:#344054;background:white;outline:none}.field input:focus,.field select:focus,.field textarea:focus{border-color:#7f9ad7;box-shadow:0 0 0 3px #edf2ff}.field textarea{min-height:84px;resize:vertical}
+    .modal-actions{display:flex;gap:9px;justify-content:space-between;align-items:center;margin-top:18px}.right-actions{display:flex;gap:9px}.ghost-btn{background:#eef1f5;color:#56606f;padding:0 15px}.primary-btn{background:#647fbe;color:#fff;padding:0 17px;font-weight:700}.danger-btn{background:#fff1f1;color:var(--danger);padding:0 15px;border:1px solid #efcaca}.hidden{display:none!important}
+    .doctor-list{display:grid;gap:8px;margin-top:8px}.doctor-item{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}.doctor-item input{border:1px solid #d0d5dd;border-radius:9px;padding:9px 10px}.doctor-item button{border:0;background:#fff1f1;color:#a84848;border-radius:9px;min-width:38px;height:38px}
+    .foot-note{margin-top:14px;font-size:11px;color:#858b96;line-height:1.45}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#202b44;color:white;padding:10px 14px;border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.25);font-size:13px;z-index:20;opacity:0;pointer-events:none;transition:.18s}.toast.show{opacity:1}
+    @media(max-width:900px){.app{grid-template-columns:1fr;padding-top:24px;width:min(680px,calc(100% - 22px))}.side{grid-template-columns:1fr 1fr;align-items:start}.doctor-row{grid-column:1/-1}.tip{display:none}.schedule-wrap{grid-template-columns:1fr}.toolbar{align-items:flex-end}.schedule{padding-left:12px;padding-right:12px}}
+    @media(max-width:620px){:root{--row:36px}.app{width:calc(100% - 16px);gap:18px;padding:16px 0 30px}.side{grid-template-columns:1fr;gap:12px}.calendar-card{padding:14px}.toolbar{align-items:flex-start;flex-direction:column}.toolbar-actions{width:100%;justify-content:stretch}.toolbar-actions button{flex:1}.schedule-wrap{gap:14px}.schedule{border-radius:11px;padding:14px 9px}.slot{grid-template-columns:47px 1fr}.slot::after{left:49px}.hit{left:50px}.appt{left:54px}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}.modal-actions{align-items:stretch;flex-direction:column-reverse}.right-actions{display:grid;grid-template-columns:1fr 1fr}.modal-actions>button{width:100%}.date-title{font-size:18px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <main class="app" id="app">
+    <aside class="side">
+      <div class="doctor-row">
+        <select class="doctor-select" id="doctorSelect" aria-label="Zgjidh mjekun"></select>
+        <button class="icon-btn" id="manageDoctors" type="button" aria-label="Menaxho mjekët" title="Menaxho mjekët">+</button>
+      </div>
+      <section class="calendar-card" aria-label="Kalendari mujor">
+        <div class="cal-head">
+          <div class="cal-title" id="monthTitle"></div>
+          <div class="cal-nav"><button id="prevMonth" type="button" aria-label="Muaji i kaluar">‹</button><button id="nextMonth" type="button" aria-label="Muaji tjetër">›</button></div>
+        </div>
+        <div class="week" aria-hidden="true"><span>H</span><span>M</span><span>M</span><span>E</span><span>P</span><span>S</span><span>D</span></div>
+        <div class="days" id="days"></div>
+      </section>
+      <div class="tip">Zgjidh mjekun dhe datën. Kliko një orar të lirë për të shtuar termin; kliko termin ekzistues për ta ndryshuar.</div>
+    </aside>
+
+    <section class="main">
+      <div class="toolbar">
+        <div><div class="date-title" id="dateTitle"></div><div class="date-sub" id="dateSub"></div></div>
+        <div class="toolbar-actions"><button id="prevDay" type="button">← Dita</button><button id="todayBtn" type="button">Sot</button><button id="nextDay" type="button">Dita →</button><button class="new-btn" id="newAppointment" type="button">+ Termin</button></div>
+      </div>
+      <div class="schedule-wrap" id="scheduleWrap"></div>
+    </section>
+  </main>
+
+  <dialog id="appointmentDialog">
+    <form class="modal" id="appointmentForm">
+      <div class="modal-head"><h2 id="appointmentHeading">Termin i ri</h2><button class="close" id="closeAppointment" type="button" aria-label="Mbyll">×</button></div>
+      <div class="form-grid">
+        <div class="field full"><label for="patient">Pacienti *</label><input id="patient" name="patient" required autocomplete="off" maxlength="90"></div>
+        <div class="field"><label for="phone">Telefoni</label><input id="phone" name="phone" inputmode="tel" maxlength="35"></div>
+        <div class="field"><label for="status">Statusi</label><select id="status" name="status"><option value="confirmed">I konfirmuar</option><option value="waiting">Në pritje</option><option value="completed">Përfunduar</option><option value="cancelled">Anuluar</option></select></div>
+        <div class="field"><label for="apptDate">Data</label><input id="apptDate" name="apptDate" type="date" required></div>
+        <div class="field"><label for="apptTime">Ora</label><select id="apptTime" name="apptTime" required></select></div>
+        <div class="field"><label for="duration">Kohëzgjatja</label><select id="duration" name="duration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option><option value="120">120 min</option></select></div>
+        <div class="field"><label for="reason">Arsyeja</label><input id="reason" name="reason" maxlength="100"></div>
+        <div class="field full"><label for="notes">Shënime</label><textarea id="notes" name="notes" maxlength="800"></textarea></div>
+      </div>
+      <div class="modal-actions"><button class="danger-btn hidden" id="deleteAppointment" type="button">Fshi termin</button><div class="right-actions"><button class="ghost-btn" id="cancelAppointment" type="button">Anulo</button><button class="primary-btn" type="submit">Ruaj</button></div></div>
+    </form>
+  </dialog>
+
+  <dialog id="doctorsDialog">
+    <form class="modal" id="doctorsForm">
+      <div class="modal-head"><h2>Menaxho mjekët</h2><button class="close" id="closeDoctors" type="button" aria-label="Mbyll">×</button></div>
+      <div class="doctor-list" id="doctorList"></div>
+      <div class="modal-actions"><button class="ghost-btn" id="addDoctor" type="button">+ Shto mjek</button><div class="right-actions"><button class="ghost-btn" id="cancelDoctors" type="button">Anulo</button><button class="primary-btn" type="submit">Ruaj</button></div></div>
+      <div class="foot-note">Versioni i parë i ruan terminet në këtë shfletues. Sinkronizimi i përbashkët mes telefonit dhe kompjuterit mund të lidhet me databazë në versionin e ardhshëm.</div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  'use strict';
+  const root = document.getElementById('app');
+  if (root.dataset.ready) return;
+  root.dataset.ready = '1';
+
+  const KEY = 'medical-center-calendar-v1';
+  const sqMonths = ['JANAR','SHKURT','MARS','PRILL','MAJ','QERSHOR','KORRIK','GUSHT','SHTATOR','TETOR','NËNTOR','DHJETOR'];
+  const statusLabel = {confirmed:'I konfirmuar',waiting:'Në pritje',completed:'Përfunduar',cancelled:'Anuluar'};
+  const $ = id => document.getElementById(id);
+  const doctorSelect=$('doctorSelect'), monthTitle=$('monthTitle'), daysEl=$('days'), dateTitle=$('dateTitle'), dateSub=$('dateSub'), scheduleWrap=$('scheduleWrap');
+  const appointmentDialog=$('appointmentDialog'), appointmentForm=$('appointmentForm'), doctorsDialog=$('doctorsDialog'), doctorsForm=$('doctorsForm');
+  let editId=null;
+
+  function localDateKey(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`}
+  function parseDateKey(key){const [y,m,d]=key.split('-').map(Number);return new Date(y,m-1,d,12,0,0,0)}
+  function uuid(){return (crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2))}
+  function defaultState(){return {doctors:[{id:'rinon',name:'Dr. Rinon Dervishi PhDc.'}],selectedDoctor:'rinon',selectedDate:localDateKey(new Date()),viewMonth:localDateKey(new Date()).slice(0,7)+'-01',appointments:[]}}
+  function load(){try{const x=JSON.parse(localStorage.getItem(KEY));if(x&&Array.isArray(x.doctors)&&Array.isArray(x.appointments))return Object.assign(defaultState(),x)}catch(e){}return defaultState()}
+  let state=load();
+  if(!state.doctors.some(d=>d.id===state.selectedDoctor)) state.selectedDoctor=state.doctors[0]?.id||'rinon';
+  function save(){localStorage.setItem(KEY,JSON.stringify(state))}
+  function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),1800)}
+  function selectedDoctor(){return state.doctors.find(d=>d.id===state.selectedDoctor)||state.doctors[0]}
+  function formatLong(key){return new Intl.DateTimeFormat('sq-AL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(parseDateKey(key))}
+  function minutesToTime(n){return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0')}
+  function timeToMinutes(t){const [h,m]=t.split(':').map(Number);return h*60+m}
+
+  function renderDoctorSelect(){doctorSelect.innerHTML='';state.doctors.forEach(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=d.name;doctorSelect.append(o)});doctorSelect.value=state.selectedDoctor}
+  function renderHeader(){dateTitle.textContent=formatLong(state.selectedDate);const count=state.appointments.filter(a=>a.doctorId===state.selectedDoctor&&a.date===state.selectedDate&&a.status!=='cancelled').length;dateSub.textContent=`${selectedDoctor()?.name||''} · ${count} ${count===1?'termin':'termine'}`}
+  function renderCalendar(){const v=parseDateKey(state.viewMonth), y=v.getFullYear(), m=v.getMonth();monthTitle.textContent=`${sqMonths[m]}  ${y}`;daysEl.innerHTML='';const first=(new Date(y,m,1).getDay()+6)%7;const start=new Date(y,m,1-first,12);for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);const key=localDateKey(d);const b=document.createElement('button');b.type='button';b.textContent=d.getDate();if(d.getMonth()!==m)b.classList.add('out');if(key===localDateKey(new Date()))b.classList.add('today');if(key===state.selectedDate)b.classList.add('selected');b.dataset.date=key;b.setAttribute('aria-label',formatLong(key));daysEl.append(b)}}
+  function appointmentAt(date,doctorId,startMin){return state.appointments.filter(a=>a.date===date&&a.doctorId===doctorId&&timeToMinutes(a.time)===startMin)}
+  function occupied(date,doctorId,startMin,duration,ignoreId){const end=startMin+duration;return state.appointments.some(a=>a.id!==ignoreId&&a.date===date&&a.doctorId===doctorId&&a.status!=='cancelled'&&Math.max(startMin,timeToMinutes(a.time))<Math.min(end,timeToMinutes(a.time)+Number(a.duration)))}
+
+  function makeSchedule(startMin,endMin){const panel=document.createElement('section');panel.className='schedule';const body=document.createElement('div');body.className='schedule-body';const rowCount=(endMin-startMin)/15;body.style.height=`calc(var(--row) * ${rowCount})`;
+    for(let i=0;i<rowCount;i++){const min=startMin+i*15;const row=document.createElement('div');row.className='slot'+(min%60===0?' hour':'');row.style.position='absolute';row.style.top=`calc(var(--row) * ${i})`;row.style.left='0';row.style.right='0';const label=document.createElement('div');label.className='time';label.textContent=min%60===0?minutesToTime(min):':'+String(min%60).padStart(2,'0');row.append(label);body.append(row);const hit=document.createElement('button');hit.type='button';hit.className='hit';hit.style.top=`calc(var(--row) * ${i})`;hit.dataset.time=minutesToTime(min);hit.setAttribute('aria-label',`Shto termin në ${minutesToTime(min)}`);body.append(hit)}
+    const appts=state.appointments.filter(a=>a.date===state.selectedDate&&a.doctorId===state.selectedDoctor&&timeToMinutes(a.time)>=startMin&&timeToMinutes(a.time)<endMin).sort((a,b)=>a.time.localeCompare(b.time));
+    appts.forEach(a=>{const s=timeToMinutes(a.time), idx=(s-startMin)/15, span=Math.max(1,Math.ceil(Number(a.duration)/15));const b=document.createElement('button');b.type='button';b.className=`appt ${a.status||'confirmed'}`;b.dataset.id=a.id;b.style.top=`calc(var(--row) * ${idx} + 2px)`;b.style.height=`calc(var(--row) * ${span} - 4px)`;const detail=[a.phone,a.reason].filter(Boolean).join(' · ');b.innerHTML=`<strong>${escapeHtml(a.patient)}</strong><small>${a.time} · ${a.duration} min${detail?' · '+escapeHtml(detail):''}</small>`;b.title=`${a.patient} — ${a.time} — ${statusLabel[a.status]||''}`;body.append(b)});
+    panel.append(body);return panel}
+  function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+  function renderSchedule(){scheduleWrap.innerHTML='';scheduleWrap.append(makeSchedule(8*60,15*60),makeSchedule(15*60,21*60+15));}
+  function render(){renderDoctorSelect();renderHeader();renderCalendar();renderSchedule()}
+
+  function fillTimeOptions(value){const sel=$('apptTime');sel.innerHTML='';for(let m=8*60;m<=21*60;m+=15){const t=minutesToTime(m),o=document.createElement('option');o.value=t;o.textContent=t;sel.append(o)}sel.value=value||'08:00'}
+  function openNew(time){editId=null;$('appointmentHeading').textContent='Termin i ri';appointmentForm.reset();$('apptDate').value=state.selectedDate;fillTimeOptions(time||'08:00');$('duration').value='30';$('status').value='confirmed';$('deleteAppointment').classList.add('hidden');appointmentDialog.showModal();setTimeout(()=>$('patient').focus(),30)}
+  function openEdit(id){const a=state.appointments.find(x=>x.id===id);if(!a)return;editId=id;$('appointmentHeading').textContent='Ndrysho termin';$('patient').value=a.patient||'';$('phone').value=a.phone||'';$('status').value=a.status||'confirmed';$('apptDate').value=a.date;fillTimeOptions(a.time);$('duration').value=String(a.duration||30);$('reason').value=a.reason||'';$('notes').value=a.notes||'';$('deleteAppointment').classList.remove('hidden');appointmentDialog.showModal()}
+  function closeAppt(){appointmentDialog.close();editId=null}
+  appointmentForm.addEventListener('submit',e=>{e.preventDefault();const patient=$('patient').value.trim();const date=$('apptDate').value,time=$('apptTime').value,duration=Number($('duration').value);if(!patient){toast('Shkruaj emrin e pacientit');return}const start=timeToMinutes(time);if(start<480||start>1260||start+duration>1275){toast('Ora del jashtë orarit 08:00–21:15');return}if(occupied(date,state.selectedDoctor,start,duration,editId)){toast('Ky orar përplaset me një termin tjetër');return}const data={id:editId||uuid(),doctorId:state.selectedDoctor,date,time,duration,patient,phone:$('phone').value.trim(),reason:$('reason').value.trim(),notes:$('notes').value.trim(),status:$('status').value};if(editId){const i=state.appointments.findIndex(a=>a.id===editId);state.appointments[i]=data}else state.appointments.push(data);state.selectedDate=date;state.viewMonth=date.slice(0,7)+'-01';save();closeAppt();render();toast('Termini u ruajt')});
+  $('deleteAppointment').addEventListener('click',()=>{if(!editId)return;if(!confirm('Ta fshij këtë termin?'))return;state.appointments=state.appointments.filter(a=>a.id!==editId);save();closeAppt();render();toast('Termini u fshi')});
+  $('closeAppointment').addEventListener('click',closeAppt);$('cancelAppointment').addEventListener('click',closeAppt);
+
+  scheduleWrap.addEventListener('click',e=>{const appt=e.target.closest('.appt');if(appt){openEdit(appt.dataset.id);return}const hit=e.target.closest('.hit');if(hit)openNew(hit.dataset.time)});
+  $('newAppointment').addEventListener('click',()=>openNew('08:00'));
+  doctorSelect.addEventListener('change',()=>{state.selectedDoctor=doctorSelect.value;save();renderHeader();renderSchedule()});
+  daysEl.addEventListener('click',e=>{const b=e.target.closest('button[data-date]');if(!b)return;state.selectedDate=b.dataset.date;state.viewMonth=b.dataset.date.slice(0,7)+'-01';save();render()});
+  function shiftMonth(delta){const d=parseDateKey(state.viewMonth);d.setMonth(d.getMonth()+delta,1);state.viewMonth=localDateKey(d);save();renderCalendar()}
+  $('prevMonth').addEventListener('click',()=>shiftMonth(-1));$('nextMonth').addEventListener('click',()=>shiftMonth(1));
+  function shiftDay(delta){const d=parseDateKey(state.selectedDate);d.setDate(d.getDate()+delta);state.selectedDate=localDateKey(d);state.viewMonth=state.selectedDate.slice(0,7)+'-01';save();render()}
+  $('prevDay').addEventListener('click',()=>shiftDay(-1));$('nextDay').addEventListener('click',()=>shiftDay(1));$('todayBtn').addEventListener('click',()=>{state.selectedDate=localDateKey(new Date());state.viewMonth=state.selectedDate.slice(0,7)+'-01';save();render()});
+
+  function renderDoctorEditor(){const list=$('doctorList');list.innerHTML='';state.doctors.forEach(d=>{const row=document.createElement('div');row.className='doctor-item';row.dataset.id=d.id;const input=document.createElement('input');input.value=d.name;input.maxLength=80;input.setAttribute('aria-label','Emri i mjekut');const del=document.createElement('button');del.type='button';del.textContent='×';del.setAttribute('aria-label','Fshi mjekun');if(state.doctors.length===1)del.disabled=true;row.append(input,del);list.append(row)})}
+  $('manageDoctors').addEventListener('click',()=>{renderDoctorEditor();doctorsDialog.showModal()});
+  $('addDoctor').addEventListener('click',()=>{const id=uuid(),row=document.createElement('div');row.className='doctor-item';row.dataset.id=id;const input=document.createElement('input');input.placeholder='Dr. Emri Mbiemri';input.maxLength=80;const del=document.createElement('button');del.type='button';del.textContent='×';row.append(input,del);$('doctorList').append(row);input.focus()});
+  $('doctorList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const row=b.closest('.doctor-item');if($('doctorList').children.length<=1)return;row.remove()});
+  doctorsForm.addEventListener('submit',e=>{e.preventDefault();const rows=[...$('doctorList').querySelectorAll('.doctor-item')];const next=rows.map(r=>({id:r.dataset.id,name:r.querySelector('input').value.trim()})).filter(d=>d.name);if(!next.length){toast('Duhet të ketë të paktën një mjek');return}const ids=new Set(next.map(d=>d.id));state.doctors=next;if(!ids.has(state.selectedDoctor))state.selectedDoctor=next[0].id;save();doctorsDialog.close();render();toast('Lista e mjekëve u ruajt')});
+  $('closeDoctors').addEventListener('click',()=>doctorsDialog.close());$('cancelDoctors').addEventListener('click',()=>doctorsDialog.close());
+  [appointmentDialog,doctorsDialog].forEach(d=>d.addEventListener('click',e=>{const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()}));
+
+  render();
+})();
+</script>
+</body>
+</html>
