@@ -34,7 +34,7 @@
     if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
     if (config.token) headers.Authorization = `Bearer ${config.token}`;
 
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...options, headers, cache: 'no-store' });
     let data = {};
     try { data = await response.json(); } catch {}
     if (!response.ok) {
@@ -65,11 +65,15 @@
     return bridge()?.getState?.() || { doctors: [], appointments: [] };
   }
 
+  function normalizeState(data) {
+    return {
+      doctors: Array.isArray(data?.doctors) ? data.doctors : [],
+      appointments: Array.isArray(data?.appointments) ? data.appointments : []
+    };
+  }
+
   function setRemote(data) {
-    bridge()?.replaceData?.({
-      doctors: Array.isArray(data.doctors) ? data.doctors : [],
-      appointments: Array.isArray(data.appointments) ? data.appointments : []
-    });
+    bridge()?.replaceData?.(normalizeState(data));
   }
 
   function ensureUi() {
@@ -87,14 +91,16 @@
       #syncCard{width:min(390px,100%);background:#fff;border-radius:18px;padding:22px;box-shadow:0 24px 70px rgba(17,29,57,.32);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#313744}
       #syncCard h3{margin:0 0 8px;font-size:20px}
       #syncCard p{margin:0 0 16px;color:#717987;font-size:13px;line-height:1.45}
-      #syncCard input{width:100%;height:47px;border:1px solid #d5dae2;border-radius:10px;padding:0 12px;font:inherit;font-size:16px;outline:none}
+      #syncCard input{width:100%;height:47px;border:1px solid #d5dae2;border-radius:10px;padding:0 12px;font:inherit;font-size:16px;outline:none;text-transform:uppercase}
       #syncCard input:focus{border-color:#49bde4;box-shadow:0 0 0 3px rgba(73,189,228,.15)}
       #syncCard .actions{display:flex;justify-content:flex-end;gap:9px;margin-top:16px}
       #syncCard button{border:0;border-radius:10px;height:42px;padding:0 14px;font-weight:750}
       #syncCancel{background:#eef1f5;color:#5b6472}
       #syncConnect{background:#12b8e8;color:#fff}
       #syncDisconnect{background:#fff1f1;color:#b54747;margin-right:auto}
+      #syncNow{background:#edf9fd;color:#12769a}
       #syncMessage{min-height:18px;margin-top:10px;color:#b54747;font-size:12px}
+      #syncLast{margin-top:-8px!important;font-size:11px!important;color:#9299a5!important}
     `;
     document.head.append(style);
 
@@ -112,10 +118,12 @@
       <div id="syncCard" role="dialog" aria-modal="true" aria-labelledby="syncTitle">
         <h3 id="syncTitle">Google Drive sync</h3>
         <p id="syncDescription">Enter the pairing code once on this device. After that, appointments sync automatically.</p>
-        <input id="syncCode" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="Pairing code">
+        <p id="syncLast"></p>
+        <input id="syncCode" type="password" inputmode="text" autocapitalize="characters" autocomplete="one-time-code" placeholder="Pairing code">
         <div id="syncMessage"></div>
         <div class="actions">
           <button id="syncDisconnect" type="button" style="display:none">Disconnect</button>
+          <button id="syncNow" type="button" style="display:none">Sync now</button>
           <button id="syncCancel" type="button">Cancel</button>
           <button id="syncConnect" type="button">Connect</button>
         </div>
@@ -126,6 +134,11 @@
     document.getElementById('syncCancel').addEventListener('click', closeDialog);
     document.getElementById('syncConnect').addEventListener('click', pairFromDialog);
     document.getElementById('syncDisconnect').addEventListener('click', disconnect);
+    document.getElementById('syncNow').addEventListener('click', async () => {
+      closeDialog();
+      if (dirty) await pushDiff();
+      else await pullIfSafe();
+    });
     document.getElementById('syncCode').addEventListener('keydown', e => { if (e.key === 'Enter') pairFromDialog(); });
     updateStatus(config.token ? 'syncing' : 'disconnected');
   }
@@ -153,21 +166,27 @@
     const overlay = document.getElementById('syncOverlay');
     const code = document.getElementById('syncCode');
     const disconnectBtn = document.getElementById('syncDisconnect');
+    const syncNowBtn = document.getElementById('syncNow');
     const connectBtn = document.getElementById('syncConnect');
     const desc = document.getElementById('syncDescription');
+    const last = document.getElementById('syncLast');
     const msg = document.getElementById('syncMessage');
     msg.textContent = '';
 
     if (config.token) {
       code.style.display = 'none';
       disconnectBtn.style.display = '';
+      syncNowBtn.style.display = '';
       connectBtn.style.display = 'none';
       desc.textContent = 'This device is connected. Appointments sync automatically with the shared Google Sheet.';
+      last.textContent = config.lastSync ? 'Last sync: ' + new Date(config.lastSync).toLocaleString() : '';
     } else {
       code.style.display = '';
       disconnectBtn.style.display = 'none';
+      syncNowBtn.style.display = 'none';
       connectBtn.style.display = '';
       desc.textContent = 'Enter the pairing code once on this device. After that, appointments sync automatically.';
+      last.textContent = '';
       code.value = '';
       setTimeout(() => code.focus(), 30);
     }
@@ -182,7 +201,7 @@
     const codeEl = document.getElementById('syncCode');
     const msg = document.getElementById('syncMessage');
     const connect = document.getElementById('syncConnect');
-    const code = codeEl.value.trim();
+    const code = codeEl.value.trim().toUpperCase();
     if (!code) {
       msg.textContent = 'Enter the pairing code.';
       return;
@@ -196,10 +215,11 @@
         body: JSON.stringify({ code, deviceName: deviceName() })
       });
       config.token = result.token;
+      config.deviceId = result.deviceId || '';
       saveConfig();
       closeDialog();
       updateStatus('syncing');
-      await initialSync();
+      await initialSync(result);
     } catch (err) {
       msg.textContent = err.message || 'Could not connect.';
       updateStatus('error');
@@ -208,7 +228,12 @@
     }
   }
 
-  function disconnect() {
+  async function disconnect() {
+    const token = config.token;
+    try {
+      if (token) await api('/api/devices/current', { method: 'DELETE' });
+    } catch {}
+
     config = {};
     saveConfig();
     baseline = null;
@@ -219,31 +244,28 @@
     updateStatus('disconnected');
   }
 
-  async function initialSync() {
+  async function initialSync(pairResult) {
     if (!config.token || syncing) return;
     syncing = true;
     updateStatus('syncing');
     try {
-      let remote = await api('/api/state');
+      let remote = pairResult && Array.isArray(pairResult.doctors)
+        ? normalizeState(pairResult)
+        : normalizeState(await api('/api/state'));
       const local = getLocal();
 
-      if ((!remote.appointments || remote.appointments.length === 0) && local.appointments.length) {
-        for (const doctor of local.doctors) {
-          await api(`/api/doctors/${encodeURIComponent(doctor.id)}`, {
-            method: 'PUT', body: JSON.stringify(doctor)
-          });
-        }
-        for (const appointment of local.appointments) {
-          await api(`/api/appointments/${encodeURIComponent(appointment.id)}`, {
-            method: 'PUT', body: JSON.stringify(appointment)
-          });
-        }
-        remote = await api('/api/state');
+      if (remote.appointments.length === 0 && local.appointments.length) {
+        remote = normalizeState(await api('/api/merge-local', {
+          method: 'POST',
+          body: JSON.stringify({ doctors: local.doctors, appointments: local.appointments })
+        }));
       }
 
       setRemote(remote);
       baseline = clone(remote);
       dirty = false;
+      config.lastSync = Date.now();
+      saveConfig();
       updateStatus('synced');
       startPolling();
     } catch (err) {
@@ -275,18 +297,16 @@
       const prevAppointments = mapById(baseline.appointments);
       const nextAppointments = mapById(current.appointments);
 
-      for (const [id, doctor] of nextDoctors) {
-        if (!prevDoctors.has(id) || changed(prevDoctors.get(id), doctor)) {
-          await api(`/api/doctors/${encodeURIComponent(id)}`, {
-            method: 'PUT', body: JSON.stringify(doctor)
-          });
-        }
-      }
+      const doctorsChanged = changed(
+        [...prevDoctors.values()].map(d => ({ id: d.id, name: d.name })),
+        [...nextDoctors.values()].map(d => ({ id: d.id, name: d.name }))
+      );
 
-      for (const [id] of prevDoctors) {
-        if (!nextDoctors.has(id)) {
-          await api(`/api/doctors/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        }
+      if (doctorsChanged) {
+        await api('/api/doctors', {
+          method: 'PUT',
+          body: JSON.stringify({ doctors: current.doctors.map(d => ({ id: d.id, name: d.name })) })
+        });
       }
 
       for (const [id, appointment] of nextAppointments) {
@@ -303,14 +323,23 @@
         }
       }
 
-      const remote = await api('/api/state');
+      const remote = normalizeState(await api('/api/state'));
       setRemote(remote);
       baseline = clone(remote);
       dirty = false;
+      config.lastSync = Date.now();
+      saveConfig();
       updateStatus('synced');
     } catch (err) {
       dirty = true;
-      updateStatus('error');
+      if (err.status === 401) {
+        config = {};
+        saveConfig();
+        baseline = null;
+        updateStatus('disconnected', 'Reconnect sync');
+      } else {
+        updateStatus('error');
+      }
       console.warn('MedCal sync failed:', err);
     } finally {
       syncing = false;
@@ -327,15 +356,25 @@
   async function pullIfSafe() {
     if (!config.token || syncing || dirty) return;
     syncing = true;
+    updateStatus('syncing');
     try {
-      const remote = await api('/api/state');
+      const remote = normalizeState(await api('/api/state'));
       if (!baseline || changed(remote, baseline)) {
         setRemote(remote);
         baseline = clone(remote);
       }
+      config.lastSync = Date.now();
+      saveConfig();
       updateStatus('synced');
     } catch (err) {
-      updateStatus('error');
+      if (err.status === 401) {
+        config = {};
+        saveConfig();
+        baseline = null;
+        updateStatus('disconnected', 'Reconnect sync');
+      } else {
+        updateStatus('error');
+      }
     } finally {
       syncing = false;
     }
@@ -350,6 +389,11 @@
   }
 
   window.addEventListener('medcal:local-change', schedulePush);
+  window.addEventListener('online', () => {
+    if (!config.token) return;
+    if (dirty) pushDiff();
+    else pullIfSafe();
+  });
   window.addEventListener('focus', () => {
     if (!config.token) return;
     if (dirty) pushDiff();
@@ -364,7 +408,7 @@
   async function boot() {
     ensureUi();
     try {
-      const status = await fetch('/api/status').then(r => r.json());
+      const status = await fetch('/api/status', { cache: 'no-store' }).then(r => r.json());
       if (!status.configured) {
         updateStatus('disconnected', 'Sync setup');
         return;
