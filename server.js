@@ -18,8 +18,8 @@ function sendCalendar(req, res) {
   let html = fs.readFileSync(indexPath, 'utf8');
 
   html = html
-    .replace('--row:23px;', '--row:26px;')
-    .replace(':root{--row:27px}', ':root{--row:30px}')
+    .replace('--row:23px;', '--row:29px;')
+    .replace(':root{--row:27px}', ':root{--row:33px}')
     .replace(
       '.appt strong{\n      display:block;\n      font-size:11px;\n      line-height:14px;',
       '.appt strong{\n      display:block;\n      font-size:13px;\n      line-height:16px;'
@@ -31,6 +31,22 @@ function sendCalendar(req, res) {
     .replace(
       "      const detail=[a.phone,a.reason].filter(Boolean).join(' · ');\n      b.innerHTML=`<strong>${escapeHtml(a.patient)}</strong><small>${a.time}${detail?' · '+escapeHtml(detail):''}</small>`;",
       "      b.innerHTML=`<strong>${escapeHtml(a.patient)}</strong>`;"
+    )
+    .replace(
+      '</head>',
+      `<style id="schedule-spacing-fix">
+        .time{
+          top:50% !important;
+          transform:translateY(-50%);
+          line-height:1 !important;
+          padding:0 0 0 7px !important;
+        }
+        .slot.hour .time{
+          top:50% !important;
+          transform:translateY(-50%);
+          line-height:1 !important;
+        }
+      </style></head>`
     );
 
   res.type('html').send(html);
