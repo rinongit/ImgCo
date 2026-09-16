@@ -1,205 +1,290 @@
-const MEDCAL_SECRET = 'PASTE_SECRET_HERE';
-
-const DOCTORS_HEADERS = ['id', 'name', 'updatedAt'];
-const APPOINTMENTS_HEADERS = ['id', 'doctorId', 'date', 'time', 'duration', 'patient', 'phone', 'reason', 'notes', 'status', 'updatedAt'];
+const SPREADSHEET_ID = '1VV5aDO7UmyzMYdGDgP3D3emQdxJ_XcM-eeq6PXrwgSs';
+const APPOINTMENTS_SHEET = 'Appointments';
+const DOCTORS_SHEET = 'Doctors';
+const DEVICES_SHEET = 'Devices';
+const META_SHEET = 'Meta';
 
 function doGet() {
-  return json({ ok: true, service: 'MedCal Google Sheets backend' });
+  return json_({ ok: true, service: 'MedCal Sheets API', version: 1 });
 }
 
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (!body.secret || body.secret !== MEDCAL_SECRET) return json({ ok: false, statusCode: 401, error: 'Unauthorized' });
-
-    ensureSetup();
     const action = String(body.action || '');
 
-    if (action === 'state') return json(getState());
-    if (action === 'upsertDoctor') return withLock(() => upsertDoctor(body.doctor));
-    if (action === 'deleteDoctor') return withLock(() => deleteDoctor(body.id));
-    if (action === 'upsertAppointment') return withLock(() => upsertAppointment(body.appointment));
-    if (action === 'deleteAppointment') return withLock(() => deleteAppointment(body.id));
+    if (action === 'pair') {
+      return withLock_(() => json_(pair_(body)));
+    }
 
-    return json({ ok: false, statusCode: 400, error: 'Unknown action' });
+    const device = authenticate_(body.token);
+    if (!device) return json_({ ok: false, error: 'Unauthorized' });
+    touchDevice_(device.row);
+
+    if (action === 'state') return json_({ ok: true, ...state_() });
+    if (action === 'mergeLocal') return withLock_(() => json_(mergeLocal_(body)));
+    if (action === 'saveAppointment') return withLock_(() => json_(saveAppointment_(body.appointment)));
+    if (action === 'deleteAppointment') return withLock_(() => json_(deleteAppointment_(body.id)));
+    if (action === 'replaceDoctors') return withLock_(() => json_(replaceDoctors_(body.doctors)));
+    if (action === 'disconnect') return withLock_(() => json_(disconnect_(device.row)));
+
+    return json_({ ok: false, error: 'Unknown action' });
   } catch (err) {
-    return json({ ok: false, statusCode: 500, error: String(err && err.message ? err.message : err) });
+    console.error(err && err.stack ? err.stack : err);
+    return json_({ ok: false, error: String(err && err.message ? err.message : err) });
   }
 }
 
-function json(value) {
-  return ContentService
-    .createTextOutput(JSON.stringify(value))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function withLock(fn) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) return json({ ok: false, statusCode: 503, error: 'Calendar is busy. Try again.' });
-  try { return json(fn()); }
-  finally { lock.releaseLock(); }
-}
-
-function spreadsheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss) throw new Error('This script must be attached to the MedCal Google Sheet');
-  return ss;
-}
-
-function ensureSheet(name, headers) {
-  const ss = spreadsheet();
-  let sheet = ss.getSheetByName(name);
-  if (!sheet) sheet = ss.insertSheet(name);
-
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.setFrozenRows(1);
-    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
-  }
-
-  sheet.getRange(1, 1, Math.max(sheet.getMaxRows(), 2), headers.length).setNumberFormat('@');
-  return sheet;
-}
-
-function ensureSetup() {
-  const doctors = ensureSheet('Doctors', DOCTORS_HEADERS);
-  ensureSheet('Appointments', APPOINTMENTS_HEADERS);
-
+function setup() {
+  ensureHeaders_();
+  if (!metaValue_('pairingCode')) throw new Error('Meta sheet is missing pairingCode');
+  const doctors = sheet_(DOCTORS_SHEET);
   if (doctors.getLastRow() < 2) {
     doctors.appendRow(['rinon', 'Dr. Rinon Dervishi PhDc', new Date().toISOString()]);
   }
 }
 
-function rows(sheet, headers) {
-  const last = sheet.getLastRow();
-  if (last < 2) return [];
-  const values = sheet.getRange(2, 1, last - 1, headers.length).getDisplayValues();
-  return values.map((row, index) => {
-    const obj = { _row: index + 2 };
-    headers.forEach((h, i) => obj[h] = row[i]);
-    return obj;
+function pair_(body) {
+  const supplied = String(body.code || '').trim();
+  const expected = String(metaValue_('pairingCode') || '').trim();
+  if (!expected || supplied !== expected) return { ok: false, error: 'Invalid pairing code' };
+
+  const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  const id = Utilities.getUuid();
+  const name = String(body.deviceName || 'Device').trim().slice(0, 80) || 'Device';
+  const now = new Date().toISOString();
+
+  sheet_(DEVICES_SHEET).appendRow([id, name, sha256_(token), now, now]);
+  return { ok: true, token, deviceId: id, ...state_() };
+}
+
+function authenticate_(token) {
+  token = String(token || '');
+  if (!token) return null;
+  const hash = sha256_(token);
+  const sh = sheet_(DEVICES_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  if (!count) return null;
+  const values = sh.getRange(2, 1, count, 5).getDisplayValues();
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][2] === hash) return { row: i + 2, id: values[i][0], name: values[i][1] };
+  }
+  return null;
+}
+
+function touchDevice_(row) {
+  sheet_(DEVICES_SHEET).getRange(row, 5).setValue(new Date().toISOString());
+}
+
+function disconnect_(row) {
+  sheet_(DEVICES_SHEET).deleteRow(row);
+  return { ok: true };
+}
+
+function state_() {
+  return {
+    doctors: readDoctors_(),
+    appointments: readAppointments_(),
+    serverTime: new Date().toISOString()
+  };
+}
+
+function readDoctors_() {
+  const sh = sheet_(DOCTORS_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  if (!count) return [];
+  return sh.getRange(2, 1, count, 3).getDisplayValues()
+    .filter(r => r[0] && r[1])
+    .map(r => ({ id: r[0], name: r[1], updatedAt: r[2] || '' }));
+}
+
+function readAppointments_() {
+  const sh = sheet_(APPOINTMENTS_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  if (!count) return [];
+  return sh.getRange(2, 1, count, 11).getDisplayValues()
+    .filter(r => r[0])
+    .map(r => ({
+      id: r[0],
+      doctorId: r[1],
+      date: r[2],
+      time: r[3],
+      duration: Number(r[4]) || 30,
+      patient: r[5],
+      phone: r[6],
+      reason: r[7],
+      notes: r[8],
+      status: r[9] || 'confirmed',
+      updatedAt: r[10] || ''
+    }));
+}
+
+function mergeLocal_(body) {
+  const doctors = Array.isArray(body.doctors) ? body.doctors : [];
+  doctors.forEach(d => upsertDoctor_(d));
+
+  const appointments = Array.isArray(body.appointments) ? body.appointments : [];
+  appointments.forEach(a => {
+    const result = saveAppointment_(a);
+    if (!result.ok) throw new Error(result.error || 'Could not import appointment');
+  });
+
+  return { ok: true, ...state_() };
+}
+
+function upsertDoctor_(doctor) {
+  if (!doctor) return;
+  const id = String(doctor.id || '').trim().slice(0, 100);
+  const name = String(doctor.name || '').trim().slice(0, 100);
+  if (!id || !name) return;
+
+  const sh = sheet_(DOCTORS_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  const rows = count ? sh.getRange(2, 1, count, 3).getDisplayValues() : [];
+  const idx = rows.findIndex(r => r[0] === id);
+  const row = [id, name, new Date().toISOString()];
+  if (idx >= 0) sh.getRange(idx + 2, 1, 1, 3).setValues([row]);
+  else sh.appendRow(row);
+}
+
+function replaceDoctors_(doctors) {
+  if (!Array.isArray(doctors)) return { ok: false, error: 'Invalid doctors list' };
+  const clean = doctors.map(d => ({
+    id: String((d && d.id) || '').trim().slice(0, 100),
+    name: String((d && d.name) || '').trim().slice(0, 100)
+  })).filter(d => d.id && d.name);
+
+  if (!clean.length) return { ok: false, error: 'At least one doctor is required' };
+  const allowed = new Set(clean.map(d => d.id));
+  const inUse = readAppointments_().find(a => !allowed.has(a.doctorId));
+  if (inUse) return { ok: false, error: 'A removed doctor still has appointments' };
+
+  const sh = sheet_(DOCTORS_SHEET);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 3).clearContent();
+  const now = new Date().toISOString();
+  sh.getRange(2, 1, clean.length, 3).setValues(clean.map(d => [d.id, d.name, now]));
+  return { ok: true, doctors: readDoctors_() };
+}
+
+function saveAppointment_(raw) {
+  const a = normalizeAppointment_(raw);
+  const error = validateAppointment_(a);
+  if (error) return { ok: false, error };
+
+  const doctors = readDoctors_();
+  if (!doctors.some(d => d.id === a.doctorId)) return { ok: false, error: 'Unknown doctor' };
+
+  const existing = readAppointments_();
+  if (a.status !== 'cancelled') {
+    const start = timeToMinutes_(a.time);
+    const end = start + a.duration;
+    const clash = existing.some(x => {
+      if (x.id === a.id || x.date !== a.date || x.doctorId !== a.doctorId || x.status === 'cancelled') return false;
+      const xs = timeToMinutes_(x.time);
+      const xe = xs + Number(x.duration);
+      return Math.max(start, xs) < Math.min(end, xe);
+    });
+    if (clash) return { ok: false, error: 'This time overlaps another appointment' };
+  }
+
+  const sh = sheet_(APPOINTMENTS_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  const ids = count ? sh.getRange(2, 1, count, 1).getDisplayValues().map(r => r[0]) : [];
+  const idx = ids.indexOf(a.id);
+  const now = new Date().toISOString();
+  const row = [a.id, a.doctorId, a.date, a.time, a.duration, a.patient, a.phone, a.reason, a.notes, a.status, now];
+  if (idx >= 0) sh.getRange(idx + 2, 1, 1, 11).setValues([row]);
+  else sh.appendRow(row);
+
+  return { ok: true, appointment: { ...a, updatedAt: now } };
+}
+
+function deleteAppointment_(id) {
+  id = String(id || '');
+  if (!id) return { ok: false, error: 'Missing appointment id' };
+  const sh = sheet_(APPOINTMENTS_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  if (!count) return { ok: true };
+  const ids = sh.getRange(2, 1, count, 1).getDisplayValues().map(r => r[0]);
+  const idx = ids.indexOf(id);
+  if (idx >= 0) sh.deleteRow(idx + 2);
+  return { ok: true };
+}
+
+function normalizeAppointment_(raw) {
+  raw = raw || {};
+  return {
+    id: String(raw.id || '').trim().slice(0, 120),
+    doctorId: String(raw.doctorId || '').trim().slice(0, 100),
+    date: String(raw.date || '').trim(),
+    time: String(raw.time || '').trim(),
+    duration: Number(raw.duration || 0),
+    patient: String(raw.patient || '').trim().slice(0, 120),
+    phone: String(raw.phone || '').trim().slice(0, 60),
+    reason: String(raw.reason || '').trim().slice(0, 160),
+    notes: String(raw.notes || '').trim().slice(0, 1200),
+    status: String(raw.status || 'confirmed').trim().slice(0, 30)
+  };
+}
+
+function validateAppointment_(a) {
+  if (!a.id || !a.doctorId || !a.patient) return 'Missing appointment data';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(a.date)) return 'Invalid date';
+  if (!/^\d{2}:\d{2}$/.test(a.time)) return 'Invalid time';
+  if (!Number.isFinite(a.duration) || a.duration < 15 || a.duration > 240 || a.duration % 15 !== 0) return 'Invalid duration';
+  if (!['confirmed', 'waiting', 'completed', 'cancelled'].includes(a.status)) return 'Invalid status';
+  const start = timeToMinutes_(a.time);
+  if (start < 8 * 60 || start > 21 * 60 + 45 || start + a.duration > 22 * 60) return 'Appointment must end by 22:00';
+  return '';
+}
+
+function timeToMinutes_(value) {
+  const parts = String(value).split(':').map(Number);
+  return parts[0] * 60 + parts[1];
+}
+
+function metaValue_(key) {
+  const sh = sheet_(META_SHEET);
+  const count = Math.max(sh.getLastRow() - 1, 0);
+  if (!count) return '';
+  const rows = sh.getRange(2, 1, count, 2).getDisplayValues();
+  const row = rows.find(r => r[0] === key);
+  return row ? row[1] : '';
+}
+
+function ensureHeaders_() {
+  const defs = [
+    [APPOINTMENTS_SHEET, ['id','doctorId','date','time','duration','patient','phone','reason','notes','status','updatedAt']],
+    [DOCTORS_SHEET, ['id','name','updatedAt']],
+    [DEVICES_SHEET, ['id','name','tokenHash','createdAt','lastSeen']],
+    [META_SHEET, ['key','value']]
+  ];
+  defs.forEach(([name, headers]) => {
+    const sh = sheet_(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
   });
 }
 
-function getState() {
-  const doctorsSheet = spreadsheet().getSheetByName('Doctors');
-  const appointmentsSheet = spreadsheet().getSheetByName('Appointments');
-
-  const doctors = rows(doctorsSheet, DOCTORS_HEADERS).map(r => ({
-    id: r.id,
-    name: r.name
-  })).filter(d => d.id && d.name);
-
-  const appointments = rows(appointmentsSheet, APPOINTMENTS_HEADERS).map(r => ({
-    id: r.id,
-    doctorId: r.doctorId,
-    date: r.date,
-    time: r.time,
-    duration: Number(r.duration || 0),
-    patient: r.patient,
-    phone: r.phone || '',
-    reason: r.reason || '',
-    notes: r.notes || '',
-    status: r.status || 'confirmed'
-  })).filter(a => a.id && a.doctorId && a.date && a.time && a.patient);
-
-  return { ok: true, doctors, appointments };
+function sheet_(name) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName(name);
+  if (!sh) throw new Error('Missing sheet: ' + name);
+  return sh;
 }
 
-function findRowById(sheet, headers, id) {
-  const all = rows(sheet, headers);
-  return all.find(r => r.id === String(id)) || null;
+function sha256_(value) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(value), Utilities.Charset.UTF_8);
+  return bytes.map(b => ((b < 0 ? b + 256 : b).toString(16).padStart(2, '0'))).join('');
 }
 
-function upsertDoctor(doctor) {
-  doctor = doctor || {};
-  const id = String(doctor.id || '').trim().slice(0, 100);
-  const name = String(doctor.name || '').trim().slice(0, 100);
-  if (!id || !name) return { ok: false, statusCode: 400, error: 'Invalid doctor data' };
-
-  const sheet = spreadsheet().getSheetByName('Doctors');
-  const existing = findRowById(sheet, DOCTORS_HEADERS, id);
-  const values = [[id, name, new Date().toISOString()]];
-  if (existing) sheet.getRange(existing._row, 1, 1, DOCTORS_HEADERS.length).setValues(values);
-  else sheet.appendRow(values[0]);
-  return { ok: true };
+function withLock_(fn) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { return fn(); }
+  finally { lock.releaseLock(); }
 }
 
-function deleteDoctor(id) {
-  id = String(id || '');
-  const appointments = rows(spreadsheet().getSheetByName('Appointments'), APPOINTMENTS_HEADERS);
-  if (appointments.some(a => a.doctorId === id)) return { ok: false, statusCode: 409, error: 'Doctor has appointments' };
-
-  const sheet = spreadsheet().getSheetByName('Doctors');
-  const existing = findRowById(sheet, DOCTORS_HEADERS, id);
-  if (existing) sheet.deleteRow(existing._row);
-  return { ok: true };
-}
-
-function timeMinutes(value) {
-  const parts = String(value || '').split(':').map(Number);
-  return parts.length === 2 ? parts[0] * 60 + parts[1] : NaN;
-}
-
-function upsertAppointment(a) {
-  a = a || {};
-  const appointment = {
-    id: String(a.id || '').trim().slice(0, 120),
-    doctorId: String(a.doctorId || '').trim().slice(0, 100),
-    date: String(a.date || ''),
-    time: String(a.time || ''),
-    duration: Number(a.duration || 0),
-    patient: String(a.patient || '').trim().slice(0, 120),
-    phone: String(a.phone || '').trim().slice(0, 60),
-    reason: String(a.reason || '').trim().slice(0, 160),
-    notes: String(a.notes || '').trim().slice(0, 1200),
-    status: String(a.status || 'confirmed').slice(0, 30)
-  };
-
-  if (!appointment.id || !appointment.doctorId || !/^\d{4}-\d{2}-\d{2}$/.test(appointment.date) || !/^\d{2}:\d{2}$/.test(appointment.time) || !appointment.patient || appointment.duration < 15) {
-    return { ok: false, statusCode: 400, error: 'Invalid appointment data' };
-  }
-
-  const doctors = rows(spreadsheet().getSheetByName('Doctors'), DOCTORS_HEADERS);
-  if (!doctors.some(d => d.id === appointment.doctorId)) return { ok: false, statusCode: 400, error: 'Unknown doctor' };
-
-  if (appointment.status !== 'cancelled') {
-    const start = timeMinutes(appointment.time);
-    const end = start + appointment.duration;
-    const all = rows(spreadsheet().getSheetByName('Appointments'), APPOINTMENTS_HEADERS);
-    const overlap = all.some(x => {
-      if (x.id === appointment.id || x.doctorId !== appointment.doctorId || x.date !== appointment.date || x.status === 'cancelled') return false;
-      const otherStart = timeMinutes(x.time);
-      const otherEnd = otherStart + Number(x.duration || 0);
-      return Math.max(start, otherStart) < Math.min(end, otherEnd);
-    });
-    if (overlap) return { ok: false, statusCode: 409, error: 'Appointment overlaps another appointment' };
-  }
-
-  const sheet = spreadsheet().getSheetByName('Appointments');
-  const existing = findRowById(sheet, APPOINTMENTS_HEADERS, appointment.id);
-  const row = [
-    appointment.id,
-    appointment.doctorId,
-    appointment.date,
-    appointment.time,
-    String(appointment.duration),
-    appointment.patient,
-    appointment.phone,
-    appointment.reason,
-    appointment.notes,
-    appointment.status,
-    new Date().toISOString()
-  ];
-
-  if (existing) sheet.getRange(existing._row, 1, 1, APPOINTMENTS_HEADERS.length).setValues([row]);
-  else sheet.appendRow(row);
-  return { ok: true };
-}
-
-function deleteAppointment(id) {
-  const sheet = spreadsheet().getSheetByName('Appointments');
-  const existing = findRowById(sheet, APPOINTMENTS_HEADERS, String(id || ''));
-  if (existing) sheet.deleteRow(existing._row);
-  return { ok: true };
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
