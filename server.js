@@ -1,56 +1,21 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 
 const app = express();
 const port = process.env.PORT || 3000;
 const indexPath = path.join(__dirname, 'public', 'index.html');
-
-const pairingCode = String(process.env.PAIRING_CODE || '');
-const signingSecret = String(process.env.SYNC_SIGNING_SECRET || '');
-const googleScriptUrl = String(process.env.GOOGLE_SCRIPT_URL || '');
-const googleScriptSecret = String(process.env.GOOGLE_SCRIPT_SECRET || '');
+const googleScriptUrl = String(process.env.GOOGLE_SCRIPT_URL || '').trim();
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
   next();
 });
 app.use(express.json({ limit: '256kb' }));
-
-function b64url(input) {
-  return Buffer.from(input).toString('base64url');
-}
-
-function sign(value) {
-  return crypto.createHmac('sha256', signingSecret).update(value).digest('base64url');
-}
-
-function safeEqual(a, b) {
-  const aa = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (aa.length !== bb.length) return false;
-  return crypto.timingSafeEqual(aa, bb);
-}
-
-function createDeviceToken(deviceName) {
-  const payload = b64url(JSON.stringify({
-    v: 1,
-    device: String(deviceName || 'Device').slice(0, 80),
-    iat: Date.now()
-  }));
-  return `${payload}.${sign(payload)}`;
-}
-
-function verifyDeviceToken(token) {
-  if (!signingSecret || !token || !token.includes('.')) return false;
-  const [payload, signature] = token.split('.');
-  if (!payload || !signature) return false;
-  return safeEqual(signature, sign(payload));
-}
 
 const pairAttempts = new Map();
 function pairingRateLimited(ip) {
@@ -66,19 +31,36 @@ function recordPairFailure(ip) {
   pairAttempts.set(ip, arr);
 }
 
-async function callGoogle(action, payload = {}) {
-  if (!googleScriptUrl || !googleScriptSecret) {
+function backendStatus(message) {
+  const m = String(message || '').toLowerCase();
+  if (m.includes('unauthorized') || m.includes('invalid pairing code')) return 401;
+  if (m.includes('overlap') || m.includes('still has appointments')) return 409;
+  if (m.includes('invalid') || m.includes('missing') || m.includes('unknown') || m.includes('at least one')) return 400;
+  return 400;
+}
+
+async function callGoogle(payload) {
+  if (!googleScriptUrl) {
     const err = new Error('Sync backend is not configured');
     err.statusCode = 503;
     throw err;
   }
 
-  const response = await fetch(googleScriptUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ secret: googleScriptSecret, action, ...payload }),
-    redirect: 'follow'
-  });
+  let response;
+  try {
+    response = await fetch(googleScriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload || {}),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (cause) {
+    const err = new Error('Could not reach Google sync backend');
+    err.statusCode = 502;
+    err.cause = cause;
+    throw err;
+  }
 
   if (!response.ok) {
     const err = new Error(`Google sync backend returned HTTP ${response.status}`);
@@ -96,9 +78,9 @@ async function callGoogle(action, payload = {}) {
     throw err;
   }
 
-  if (data && data.ok === false) {
-    const err = new Error(data.error || 'Google sync backend rejected the request');
-    err.statusCode = Number(data.statusCode || 400);
+  if (!data || data.ok === false) {
+    const err = new Error(data?.error || 'Google sync backend rejected the request');
+    err.statusCode = backendStatus(err.message);
     throw err;
   }
 
@@ -107,58 +89,66 @@ async function callGoogle(action, payload = {}) {
 
 function requireSyncAuth(req, res, next) {
   const header = String(req.headers.authorization || '');
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!verifyDeviceToken(token)) return res.status(401).json({ error: 'Unauthorized' });
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  req.syncToken = token;
   next();
 }
 
 app.get('/api/status', (req, res) => {
-  res.json({ configured: Boolean(pairingCode && signingSecret && googleScriptUrl && googleScriptSecret) });
+  res.json({ configured: Boolean(googleScriptUrl) });
 });
 
-app.post('/api/pair', (req, res) => {
-  if (!pairingCode || !signingSecret || !googleScriptUrl || !googleScriptSecret) {
-    return res.status(503).json({ error: 'Sync is not configured yet' });
-  }
+app.post('/api/pair', async (req, res, next) => {
+  if (!googleScriptUrl) return res.status(503).json({ error: 'Sync is not configured yet' });
 
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   if (pairingRateLimited(ip)) return res.status(429).json({ error: 'Too many pairing attempts. Try again later.' });
 
-  const code = String(req.body?.code || '');
-  if (!safeEqual(code, pairingCode)) {
-    recordPairFailure(ip);
-    return res.status(401).json({ error: 'Invalid pairing code' });
+  try {
+    const data = await callGoogle({
+      action: 'pair',
+      code: String(req.body?.code || ''),
+      deviceName: String(req.body?.deviceName || 'Device').slice(0, 80)
+    });
+    pairAttempts.delete(ip);
+    res.json(data);
+  } catch (err) {
+    if (err.statusCode === 401) recordPairFailure(ip);
+    next(err);
   }
-
-  pairAttempts.delete(ip);
-  res.json({ token: createDeviceToken(req.body?.deviceName || 'Device') });
 });
 
 app.use('/api', requireSyncAuth);
 
 app.get('/api/state', async (req, res, next) => {
   try {
-    const data = await callGoogle('state');
-    res.json({ doctors: data.doctors || [], appointments: data.appointments || [] });
+    const data = await callGoogle({ action: 'state', token: req.syncToken });
+    res.json({
+      doctors: Array.isArray(data.doctors) ? data.doctors : [],
+      appointments: Array.isArray(data.appointments) ? data.appointments : [],
+      serverTime: data.serverTime || null
+    });
   } catch (err) { next(err); }
 });
 
-app.put('/api/doctors/:id', async (req, res, next) => {
+app.post('/api/merge-local', async (req, res, next) => {
   try {
-    const doctor = {
-      id: String(req.params.id || '').trim().slice(0, 100),
-      name: String(req.body?.name || '').trim().slice(0, 100)
-    };
-    if (!doctor.id || !doctor.name) return res.status(400).json({ error: 'Invalid doctor data' });
-    await callGoogle('upsertDoctor', { doctor });
-    res.json({ ok: true });
+    const data = await callGoogle({
+      action: 'mergeLocal',
+      token: req.syncToken,
+      doctors: Array.isArray(req.body?.doctors) ? req.body.doctors : [],
+      appointments: Array.isArray(req.body?.appointments) ? req.body.appointments : []
+    });
+    res.json(data);
   } catch (err) { next(err); }
 });
 
-app.delete('/api/doctors/:id', async (req, res, next) => {
+app.put('/api/doctors', async (req, res, next) => {
   try {
-    await callGoogle('deleteDoctor', { id: String(req.params.id || '') });
-    res.json({ ok: true });
+    const doctors = Array.isArray(req.body?.doctors) ? req.body.doctors : [];
+    const data = await callGoogle({ action: 'replaceDoctors', token: req.syncToken, doctors });
+    res.json(data);
   } catch (err) { next(err); }
 });
 
@@ -166,7 +156,7 @@ app.put('/api/appointments/:id', async (req, res, next) => {
   try {
     const a = req.body || {};
     const appointment = {
-      id: String(req.params.id || '').trim().slice(0, 120),
+      id: String(req.params.id || a.id || '').trim().slice(0, 120),
       doctorId: String(a.doctorId || '').trim().slice(0, 100),
       date: String(a.date || ''),
       time: String(a.time || ''),
@@ -182,15 +172,26 @@ app.put('/api/appointments/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid appointment data' });
     }
 
-    await callGoogle('upsertAppointment', { appointment });
-    res.json({ ok: true });
+    const data = await callGoogle({ action: 'saveAppointment', token: req.syncToken, appointment });
+    res.json(data);
   } catch (err) { next(err); }
 });
 
 app.delete('/api/appointments/:id', async (req, res, next) => {
   try {
-    await callGoogle('deleteAppointment', { id: String(req.params.id || '') });
-    res.json({ ok: true });
+    const data = await callGoogle({
+      action: 'deleteAppointment',
+      token: req.syncToken,
+      id: String(req.params.id || '')
+    });
+    res.json(data);
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/devices/current', async (req, res, next) => {
+  try {
+    const data = await callGoogle({ action: 'disconnect', token: req.syncToken });
+    res.json(data);
   } catch (err) { next(err); }
 });
 
@@ -218,7 +219,7 @@ function sendCalendar(req, res) {
     )
     .replace(
       'Terminet aktualisht ruhen në këtë shfletues. Sinkronizimi mes telefonit dhe kompjuterit do të lidhet me databazë në versionin pasues.',
-      'Terminet ruhen në këtë pajisje dhe mund të sinkronizohen me Google Drive.'
+      'Terminet ruhen në këtë pajisje dhe sinkronizohen me Google Drive kur kjo pajisje është e lidhur.'
     )
     .replace(
       '</head>',
@@ -226,16 +227,21 @@ function sendCalendar(req, res) {
     )
     .replace('</body>', '<script src="/sync.js" defer></script></body>');
 
+  res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(html);
 }
 
 app.get('/health', (req, res) => res.status(200).send('ok'));
 app.get('/', sendCalendar);
+app.get('/sync.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, 'public', 'sync.js'));
+});
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'], index: false }));
 app.use(sendCalendar);
 
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error(err.message || err);
   const status = Number(err.statusCode || 500);
   res.status(status).json({ error: status >= 500 ? 'Sync server error' : err.message });
 });
